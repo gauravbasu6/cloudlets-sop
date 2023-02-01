@@ -4,64 +4,159 @@ const diskUsage = require('check-disk-space').default;
 const fs = require('fs');
 
 const SERVER = process.env.SERVER;
-const PORT =  process.env.PORT || 3000; 
+const PORT = process.env.PORT || 3000;
 
-/*******************************************************/
-/* There are 3 storageSpaceStates :
-    1) LOW - If free space ratio <= 0.4,
-    2) MID - If free space ratio <= 0.8 but > 0.4
-    3) HIG - If free space ratio > 0.8
-*/
-let storageSpaceState = 'LOW';
-const THRESHOLD0 = 0.4;
-const THRESHOLD1 = 0.8;
-/*******************************************/
+let storageSpaceState_mem = 'LOW';
+let storageSpaceState_cpu = 'LOW';
+let numberOfTasks = Array(3).fill(0);
+let timeOfTasks = Array(3).fill(100000);
+const THRESHOLD0_mem = 0.4;
+const THRESHOLD1_mem = 0.8;
+const THRESHOLD0_cpu = 0.2;//added cpu lower threshold
+const THRESHOLD1_cpu = 0.9;//added cpu higher threshold
+
+const task_data = () =>{
+    const randnum = Math.floor(Math.random()*2); //for testing purposes, in deployment this variable is user defined where he tells if it is data or a task
+    return randnum;// 0 for task 1 for data
+}
+
+const getNfTf = () =>{
+    const randnumTf = Math.floor(Math.random()*10);
+    const randnumNf = Math.random()*5;
+    return{
+            NF: randnumNf,
+            TF: randnumTf
+    };
+}
+
+const taskParameters = (NF,TF) =>{
+    timeOfTasks[0] = timeOfTasks[1];
+    numberOfTasks[0] = numberOfTasks[1];
+    timeOfTasks[1] = timeOfTasks[2];
+    numberOfTasks[1] = numberOfTasks[2];
+    timeOfTasks[2] = NF;
+    numberOfTasks[2] = TF;
+
+}
+
+
 const getRatio = diskSpace => {
-    // return { ratio: diskSpace.free / diskSpace.size }; // use this for production; actually gets the ratio from fs
-    const randNum = Math.random(); // for testing purposes; (sending a random 
-    return { ratio: randNum }; // for testing purposes;     value between 0 and 1)
-};
+    // return { ratio_mem: diskSpace.free / diskSpace.size }; // use this for production
+    const randNum_mem = Math.random(); // for testing purposes
+    const randNum_cpu = (Math.random()*0.9);
+    return { ratio_mem: randNum_mem,
+            ratio_cpu: randNum_cpu }; //added a cpu load evaluator
+};// make another function that actually calculates CPU load (Med Priority)
 const sendStorageStatusUpdate = () => {
-    diskUsage(process.env.DISKPATH).then(diskSpace => { // object returned by diskUsage() is sent to getRatio() to finally return reqd free space ratio
-        const ratio = getRatio(diskSpace).ratio; //accessing 'ratio' value of returned object
+    diskUsage(process.env.DISKPATH).then(diskSpace => {
+        const ratio_mem = getRatio(diskSpace).ratio_mem;
+        const ratio_cpu = getRatio(diskSpace).ratio_cpu;
+       
+
+        if (ratio_mem <= THRESHOLD0_mem) {
+            storageSpaceState_mem = 'LOW';
+        } else if (THRESHOLD0_mem < ratio_mem && ratio_mem <= THRESHOLD1_mem) {
+            storageSpaceState_mem = 'MID';
+        } else {
+            storageSpaceState_mem = 'HIG';
+        }
+
+        
+        if (ratio_cpu <= THRESHOLD0_cpu) {
+            storageSpaceState_cpu = 'LOW';
+        } else if (THRESHOLD0_cpu < ratio_cpu && ratio_cpu <= THRESHOLD1_cpu) {
+            storageSpaceState_cpu = 'MID';
+        } else {
+            storageSpaceState_cpu = 'HIG';
+        }
+
         const storageInfo = {
             ...diskSpace,
-            ratio: ratio,
-        }; //appending ratio to the diskSpace object
-
-        if (ratio <= THRESHOLD0) {
-            storageSpaceState = 'LOW';
-            socket.emit('storage_info', {
-                ...storageInfo,
-                state: storageSpaceState,
-            });
-        } else if (THRESHOLD0 < ratio && ratio <= THRESHOLD1) {
-            storageSpaceState = 'MID';
-            socket.emit('storage_info', {
-                ...storageInfo,
-                state: storageSpaceState,
-            }); 
-        } else {
-            storageSpaceState = 'HIG';
-            socket.emit('storage_info', {
-                ...storageInfo,
-                state: storageSpaceState,
-            });//emit('event-name',{args})
+            ratio_mem: ratio_mem,
+            ratio_cpu: ratio_cpu
         }
-        //https://socket.io/docs/v4/client-api/#socketemiteventname-args - docs for socket.emit() func
+
+        const task_or_data = task_data();
+        if(task_or_data){
+        socket.emit('storage_info', {
+            ...storageInfo,
+            state_mem: storageSpaceState_mem,
+            state_cpu: storageSpaceState_cpu,
+            NP:timeOfTasks[0],
+            NC:timeOfTasks[1],
+            NF:timeOfTasks[2],
+            TP:numberOfTasks[0],
+            TC:numberOfTasks[1],
+            TF:numberOfTasks[2]
+        })}
+
+        else{
+        //NF = getNfTf().NF;
+        //TF = getNfTf().TF;
+        //taskParameters(NF,TF)
+        socket.emit('cpu_info', {
+            ...storageInfo,
+            state_mem: storageSpaceState_mem,
+            state_cpu: storageSpaceState_cpu,
+            NP:timeOfTasks[0],
+            NC:timeOfTasks[1],
+            NF:timeOfTasks[2],
+            TP:numberOfTasks[0],
+            TC:numberOfTasks[1],
+            TF:numberOfTasks[2]
+        })}
+
+
     });
 };
 
 
-const socket = io(SERVER + PORT); // wants to access a specific port of the server. Not sure how the + works for env vars.
-// connect event being triggered
+/* const sendCPUStatusUpdate = () => {
+    diskUsage(process.env.DISKPATH).then(diskSpace => {
+        const ratio_cpu = getRatio(diskSpace).ratio_cpu;
+       
+        
+        const storageInfo = {
+            ...diskSpace,
+            ratio_cpu: ratio_cpu,
+            
+        };
+
+        if (ratio_cpu <= THRESHOLD0_cpu) {
+            storageSpaceState_cpu = 'LOW';
+            socket.emit('cpu_info', {
+                ...storageInfo,
+                state_cpu: storageSpaceState_cpu,
+            });
+        } else if (THRESHOLD0_cpu < ratio_cpu && ratio_cpu <= THRESHOLD1_cpu) {
+            storageSpaceState_cpu = 'MID';
+            socket.emit('cpu_info', {
+                ...storageInfo,
+                state_cpu: storageSpaceState_cpu,
+            });
+        } else {
+            storageSpaceState_cpu = 'HIG';
+            socket.emit('cpu_info', {
+                ...storageInfo,
+                state_cpu: storageSpaceState_cpu,
+            });
+        }
+
+    });
+}; */
+
+
+
+
+
+const socket = io(SERVER + PORT);
 socket.on('connect', () => {
     console.log(socket.id);
     sendStorageStatusUpdate();
+    //sendCPUStatusUpdate();
 });
 
-// storage-info event triggered
-socket.on('storage_info', () => { 
+socket.on('storage_info', () => {
     console.log('received storage request');
     diskUsage(process.env.DISKPATH).then(diskSpace => {
         socket.emit('storage_info', {
@@ -91,6 +186,22 @@ socket.on('high_storage_send_data', () => {
     });
 });
 
+
+socket.on('high_cpu_send_task', () => {  // make sure that the file is actually being transferred (LOW priority)
+   
+    NF = getNfTf().NF;
+    TF = getNfTf().TF;
+        
+    const fileName = 'a.out';
+    socket.emit('high_cpu_send_task', {
+        fileName: fileName,
+        NF: NF,
+        TF: TF
+    });
+});
+
+
+
 socket.on('receive_data', data => {
     console.log(`saving data to file`, data.fileName);
     // fs.writeFile(
@@ -107,7 +218,14 @@ socket.on('receive_data', data => {
     // );
 });
 
+
+
+socket.on('receive_task', data => {
+    taskParameters(data.NF,data.TF);
+    console.log(`adding task for execution`, data.data);
+});
+
 setInterval(() => {
     sendStorageStatusUpdate();
-}, process.env.DISKPOLLINTERVAL); 
-//DISKPOLLINTERVAL will tell setInterval() how often to check if the clients have HIG, MED or LOW disk space.
+    //sendCPUStatusUpdate();
+}, process.env.DISKPOLLINTERVAL);
